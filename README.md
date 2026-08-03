@@ -1,117 +1,174 @@
+````markdown
 # codex-token-usage
 
-Глобальный skill для Codex, который показывает накопительное использование токенов текущей задачи.
+A global skill for Codex that shows the cumulative token usage for the current task.
 
 ```text
-Input tokens 2 184
+Input tokens 2,184
 Output tokens 742
-Estimated total 2 926
+Estimated total 2,926
 ```
 
-Skill читает локальные JSONL-журналы Codex и берёт последнее записанное событие `token_count`. Если задача запускала subagents, их токены также рекурсивно добавляются к результату без повторного учёта.
+The skill reads local Codex JSONL logs and retrieves the latest recorded `token_count` event. If the task launched subagents, their token usage is also added recursively without double counting.
 
-## Что учитывается
+## What is included
 
-- `Input tokens` — все входные токены, включая cached input.
-- `Output tokens` — все выходные токены, включая reasoning output.
-- `Estimated total` — сумма input и output.
-- Каждый основной агент и subagent учитывается один раз.
-- При недоступной или несовместимой статистике выводится `N/A`.
+- **Input tokens** — all input tokens, including cached input.
+- **Output tokens** — all output tokens, including reasoning output.
+- **Estimated total** — the sum of input and output tokens.
+- Each main agent and subagent is counted only once.
+- If statistics are unavailable or incompatible, `N/A` is displayed.
 
-Skill работает только по явному вызову `$codex-token-usage` и не запускается автоматически при обычном разговоре о токенах.
+The skill only runs when explicitly invoked with:
 
-## Требования
+```text
+$codex-token-usage
+```
 
-- Локальная сессия Codex с сохранением журналов в `.codex/sessions`.
-- Python 3.10 или новее.
-- Команда `python` должна быть доступна из терминала Codex.
-- Git — для установки способом ниже.
+It does **not** run automatically during normal conversations about tokens.
 
-Проверить Python:
+---
+
+## Requirements
+
+- Local Codex session with logs stored in `.codex/sessions`
+- Python **3.10+**
+- The `python` command must be available from the Codex terminal
+- Git (optional, for installation)
+
+Check your Python version:
 
 ```powershell
 python --version
 ```
 
-## Установка из GitHub на Windows
+---
 
-Откройте PowerShell и создайте папку пользовательских skills:
+## Installation (Git)
+
+Create the user skills directory:
 
 ```powershell
 New-Item -ItemType Directory -Force `
   -Path "$env:USERPROFILE\.agents\skills" | Out-Null
 ```
 
-Клонируйте репозиторий прямо в папку skills:
+Clone the repository:
 
 ```powershell
 git clone https://github.com/Web3Zak/codex-token-usage.git `
   "$env:USERPROFILE\.agents\skills\codex-token-usage"
 ```
 
-Проверьте установку:
+Verify the installation:
 
 ```powershell
 Test-Path "$env:USERPROFILE\.agents\skills\codex-token-usage\SKILL.md"
 ```
 
-Команда должна вернуть `True`.
-
-Codex обычно обнаруживает новый skill автоматически. Если он не появился, откройте новую задачу или перезапустите Codex.
-
-## Установка без Git
-
-1. Откройте страницу [Web3Zak/codex-token-usage](https://github.com/Web3Zak/codex-token-usage).
-2. Нажмите **Code → Download ZIP**.
-3. Распакуйте архив.
-4. Переименуйте папку `codex-token-usage-main` в `codex-token-usage`.
-5. Переместите её в `%USERPROFILE%\.agents\skills\`.
-
-Итоговый путь должен быть таким:
+The command should return:
 
 ```text
-C:\Users\<имя>\.agents\skills\codex-token-usage\SKILL.md
+True
 ```
 
-Не должно быть двойной вложенности вида `codex-token-usage\codex-token-usage\SKILL.md`.
+Codex usually detects the new skill automatically. If it does not appear, open a new task or restart Codex.
 
-## Использование
+---
 
-В новой или текущей задаче Codex вызовите:
+## Installation (without Git)
+
+1. Open the repository:
+   https://github.com/Web3Zak/codex-token-usage
+2. Click **Code → Download ZIP**.
+3. Extract the archive.
+4. Rename the folder from `codex-token-usage-main` to `codex-token-usage`.
+5. Move it to:
+
+```text
+%USERPROFILE%\.agents\skills\
+```
+
+The final directory should look like:
+
+```text
+C:\Users\<username>\.agents\skills\codex-token-usage\SKILL.md
+```
+
+Avoid double nesting such as:
+
+```text
+codex-token-usage\
+└── codex-token-usage\
+    └── SKILL.md
+```
+
+---
+
+## Usage
+
+Run the skill inside any Codex task:
 
 ```text
 $codex-token-usage
 ```
 
-Skill вернёт только три строки со статистикой токенов.
+Example output:
 
-## Обновление
+```text
+Input tokens 2,184
+Output tokens 742
+Estimated total 2,926
+```
 
-Если skill установлен через Git:
+---
+
+## Updating
+
+If installed via Git:
 
 ```powershell
 git -C "$env:USERPROFILE\.agents\skills\codex-token-usage" pull --ff-only
 ```
 
-После обновления при необходимости перезапустите Codex.
+Restart Codex if necessary.
 
-## macOS и Linux
+---
 
-Пользовательские skills хранятся в `~/.agents/skills`:
+## macOS / Linux
+
+User skills are stored in:
+
+```text
+~/.agents/skills
+```
+
+Install with:
 
 ```bash
 mkdir -p ~/.agents/skills
+
 git clone https://github.com/Web3Zak/codex-token-usage.git \
   ~/.agents/skills/codex-token-usage
 ```
 
-Команда `python` должна запускать Python 3.10 или новее.
+The `python` command must launch Python 3.10 or newer.
 
-## Ограничения
+---
 
-- Отчёт отражает последнее состояние, уже записанное Codex в журнал.
-- Токены ответа, который ещё генерируется, заранее посчитать невозможно.
-- Стоимость, rate limits и размер контекстного окна не выводятся.
-- Skill предназначен для локальных задач Codex; в облачной среде без локальных rollout-журналов статистика может быть недоступна.
+## Limitations
 
-Скрипт использует только стандартную библиотеку Python, читает журналы в режиме read-only и не отправляет их по сети.
+- The report reflects the latest state already written to the Codex session log.
+- Tokens for a response that is still being generated cannot be calculated in advance.
+- Cost, rate limits, and context window size are not displayed.
+- The skill is intended for local Codex tasks. In cloud environments without local rollout logs, statistics may be unavailable.
+
+---
+
+## Security
+
+- Uses only the Python standard library.
+- Reads Codex session logs in **read-only** mode.
+- Does **not** modify any files.
+- Does **not** send any data over the network.
+````
