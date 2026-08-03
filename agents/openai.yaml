@@ -1,7 +1,7 @@
 interface:
   display_name: "Codex Token Usage"
-  short_description: "Show total tokens for current Codex task"
-  default_prompt: "Use $codex-token-usage to show total token usage for this task."
+  short_description: "Show task tokens and current context usage"
+  default_prompt: "Use $codex-token-usage to show token and context usage for this task."
 
 policy:
   allow_implicit_invocation: false

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print cumulative token usage for the current Codex task."""
+"""Print task token usage and current Codex context-window usage."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import re
+import sys
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,9 @@ THREAD_ID_PATTERN = re.compile(
     r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.jsonl$"
 )
+CONTEXT_BAR_WIDTH = 13
+FILLED_BLOCK = "█"
+EMPTY_BLOCK = "░"
 
 
 class UsageUnavailable(Exception):
@@ -31,10 +35,23 @@ class TokenUsage:
 
 
 @dataclass(frozen=True)
+class ContextUsage:
+    used_tokens: int
+    window_tokens: int
+
+
+@dataclass(frozen=True)
+class UsageReport:
+    task_usage: TokenUsage
+    context_usage: ContextUsage | None
+
+
+@dataclass(frozen=True)
 class TranscriptSnapshot:
     thread_id: str
     session_id: str
     usage: TokenUsage | None
+    context_usage: ContextUsage | None
     child_thread_ids: frozenset[str]
 
 
@@ -90,42 +107,61 @@ def nonnegative_integer(mapping: dict[str, Any], key: str) -> int:
     return value
 
 
-def parse_usage(info: Any) -> TokenUsage | None:
-    if info is None:
+def parse_token_usage(value: Any) -> TokenUsage | None:
+    if value is None:
         return None
-    if not isinstance(info, dict):
+    if not isinstance(value, dict):
         raise UsageUnavailable
 
-    total_usage = info.get("total_token_usage")
-    if total_usage is None:
-        return None
-    if not isinstance(total_usage, dict):
-        raise UsageUnavailable
-
-    input_tokens = nonnegative_integer(total_usage, "input_tokens")
-    output_tokens = nonnegative_integer(total_usage, "output_tokens")
-    total_tokens = nonnegative_integer(total_usage, "total_tokens")
+    input_tokens = nonnegative_integer(value, "input_tokens")
+    output_tokens = nonnegative_integer(value, "output_tokens")
+    total_tokens = nonnegative_integer(value, "total_tokens")
     if total_tokens != input_tokens + output_tokens:
         raise UsageUnavailable
 
-    cached = total_usage.get("cached_input_tokens")
+    cached = value.get("cached_input_tokens")
     if cached is not None:
-        cached_tokens = nonnegative_integer(total_usage, "cached_input_tokens")
+        cached_tokens = nonnegative_integer(value, "cached_input_tokens")
         if cached_tokens > input_tokens:
             raise UsageUnavailable
 
-    reasoning = total_usage.get("reasoning_output_tokens")
+    reasoning = value.get("reasoning_output_tokens")
     if reasoning is not None:
-        reasoning_tokens = nonnegative_integer(total_usage, "reasoning_output_tokens")
+        reasoning_tokens = nonnegative_integer(value, "reasoning_output_tokens")
         if reasoning_tokens > output_tokens:
             raise UsageUnavailable
 
     return TokenUsage(input_tokens, output_tokens, total_tokens)
 
 
+def parse_token_info(
+    info: Any,
+) -> tuple[TokenUsage | None, ContextUsage | None]:
+    if info is None:
+        return None, None
+    if not isinstance(info, dict):
+        raise UsageUnavailable
+
+    total_usage = parse_token_usage(info.get("total_token_usage"))
+    context_usage = None
+    try:
+        last_usage = parse_token_usage(info.get("last_token_usage"))
+        window_value = info.get("model_context_window")
+        if last_usage is not None and window_value is not None:
+            window_tokens = nonnegative_integer(info, "model_context_window")
+            if window_tokens == 0:
+                raise UsageUnavailable
+            context_usage = ContextUsage(last_usage.total_tokens, window_tokens)
+    except UsageUnavailable:
+        context_usage = None
+
+    return total_usage, context_usage
+
+
 def read_transcript(path: Path) -> TranscriptSnapshot:
     metadata: dict[str, Any] | None = None
     latest_usage: TokenUsage | None = None
+    latest_context_usage: ContextUsage | None = None
     child_ids: set[str] = set()
 
     for record in jsonl_records(path):
@@ -143,9 +179,12 @@ def read_transcript(path: Path) -> TranscriptSnapshot:
 
         payload_type = payload.get("type")
         if payload_type == "token_count":
-            usage = parse_usage(payload.get("info"))
+            info = payload.get("info")
+            usage, context_usage = parse_token_info(info)
             if usage is not None:
                 latest_usage = usage
+            if info is not None:
+                latest_context_usage = context_usage
         elif payload_type == "sub_agent_activity":
             child_id = payload.get("agent_thread_id")
             if isinstance(child_id, str) and child_id:
@@ -166,6 +205,7 @@ def read_transcript(path: Path) -> TranscriptSnapshot:
         thread_id=thread_id,
         session_id=session_id,
         usage=latest_usage,
+        context_usage=latest_context_usage,
         child_thread_ids=frozenset(child_ids),
     )
 
@@ -230,7 +270,7 @@ def current_transcript(
     return snapshot
 
 
-def aggregate_task_usage(transcript: Path | None) -> TokenUsage:
+def aggregate_task_usage(transcript: Path | None) -> UsageReport:
     root = sessions_root_for(transcript)
     index = index_transcripts(root, transcript)
     current = current_transcript(index, transcript)
@@ -268,10 +308,13 @@ def aggregate_task_usage(transcript: Path | None) -> TokenUsage:
     if not found_usage:
         raise UsageUnavailable
 
-    return TokenUsage(
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        total_tokens=input_tokens + output_tokens,
+    return UsageReport(
+        task_usage=TokenUsage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=input_tokens + output_tokens,
+        ),
+        context_usage=current.context_usage,
     )
 
 
@@ -279,30 +322,74 @@ def format_number(value: int) -> str:
     return f"{value:,}".replace(",", " ")
 
 
-def render(usage: TokenUsage | None) -> str:
-    if usage is None:
+def format_compact_tokens(value: int) -> str:
+    if value < 1_000:
+        return str(value)
+    return f"{(value + 500) // 1_000}k"
+
+
+def context_percentage(context: ContextUsage) -> int:
+    percentage = (
+        context.used_tokens * 100 + context.window_tokens // 2
+    ) // context.window_tokens
+    return min(100, percentage)
+
+
+def render_context(context: ContextUsage | None) -> tuple[str, str]:
+    if context is None:
+        return EMPTY_BLOCK * CONTEXT_BAR_WIDTH, "N/A   N/A / N/A tokens"
+
+    percentage = context_percentage(context)
+    filled = min(
+        CONTEXT_BAR_WIDTH,
+        (context.used_tokens * CONTEXT_BAR_WIDTH + context.window_tokens // 2)
+        // context.window_tokens,
+    )
+    bar = FILLED_BLOCK * filled + EMPTY_BLOCK * (CONTEXT_BAR_WIDTH - filled)
+    summary = (
+        f"{percentage}%   {format_compact_tokens(context.used_tokens)} / "
+        f"{format_compact_tokens(context.window_tokens)} tokens"
+    )
+    return bar, summary
+
+
+def render(report: UsageReport | None) -> str:
+    if report is None:
         input_value = output_value = total_value = "N/A"
+        context = None
     else:
+        usage = report.task_usage
         input_value = format_number(usage.input_tokens)
         output_value = format_number(usage.output_tokens)
         total_value = format_number(usage.total_tokens)
+        context = report.context_usage
+
+    context_bar, context_summary = render_context(context)
 
     return "\n".join(
         (
             f"Input tokens {input_value}",
             f"Output tokens {output_value}",
             f"Estimated total {total_value}",
+            "",
+            "Context",
+            "",
+            context_bar,
+            "",
+            context_summary,
         )
     )
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     args = parse_args()
     try:
-        usage = aggregate_task_usage(args.transcript)
+        report = aggregate_task_usage(args.transcript)
     except (OSError, UsageUnavailable):
-        usage = None
-    print(render(usage))
+        report = None
+    print(render(report))
     return 0
 
 
