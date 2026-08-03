@@ -1,4 +1,3 @@
-````markdown
 # codex-token-usage
 
 A global skill for Codex that shows the cumulative token usage for the current task.
@@ -171,4 +170,3 @@ The `python` command must launch Python 3.10 or newer.
 - Reads Codex session logs in **read-only** mode.
 - Does **not** modify any files.
 - Does **not** send any data over the network.
-````
