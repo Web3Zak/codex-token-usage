@@ -1,4 +1,3 @@
-````markdown
 # codex-token-usage
 
 A global skill for Codex that displays the cumulative token usage of the current task.
@@ -130,4 +129,3 @@ The `python` command must launch Python 3.10 or newer.
 - The skill is intended for local Codex tasks. In cloud environments without local rollout logs, statistics may be unavailable.
 
 The script uses only the Python standard library, reads logs in read-only mode, and does not send any data over the network.
-````
